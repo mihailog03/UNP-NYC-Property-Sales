@@ -1,0 +1,927 @@
+---
+title: "Seminarski"
+output: word_document
+date: "2026-02-19"
+---
+
+```{r setup, include=FALSE}
+## ucitavanje biblioteka
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(scales)
+library(nortest)
+library(glmnet)
+library(Metrics)
+data = read.csv("nyc-rolling-sales.csv")
+```
+
+#Uvodni deo
+Funkcija str
+
+```{r}
+str(data)
+```
+
+
+
+#Ciscenje
+Ciscenje
+
+```{r}
+data <- data[, -1]
+```
+
+#na vrednosti
+```{r}
+colSums(is.na(data))
+```
+
+#uklanjanje EASE.MENT
+```{r}
+data$EASE.MENT <- NULL
+```
+
+
+#head
+```{r}
+head(data)
+```
+
+#provera ""
+```{r}
+colSums(data == " ")
+```
+
+
+#provera istih redova sa ""
+```{r}
+isti_redovi <- (data$TAX.CLASS.AT.PRESENT == " ") & (data$BUILDING.CLASS.AT.PRESENT == " ")
+sum(isti_redovi)
+
+```
+
+#provera da li su koncentrisani u jednoj oblasti
+```{r}
+data_fali <- data[isti_redovi, ]
+table(data_fali$BOROUGH)
+sort(table(data_fali$NEIGHBORHOOD), decreasing = TRUE)
+```
+
+
+#apartment number po klasama
+```{r}
+head(sort(table(data$BUILDING.CLASS.CATEGORY[data$APARTMENT.NUMBER == " "]),decreasing = TRUE), 15)
+```
+
+#da li je ista building class kategorija
+```{r}
+head(sort(table(data_fali$BUILDING.CLASS.CATEGORY), decreasing = TRUE), 15)
+```
+
+#apartment number missing
+```{r}
+sum(data$APARTMENT.NUMBER == " ")
+```
+
+#uklanjanje obradjenih kolona sa nedostajucim vrednostima
+```{r}
+data <- data %>% 
+  select(-TAX.CLASS.AT.PRESENT, -BUILDING.CLASS.AT.PRESENT, -APARTMENT.NUMBER)
+```
+
+#prikaz zbog crtica u SALE.PRICE
+```{r}
+head(data$SALE.PRICE, 10)
+```
+
+#lose nalazenje -
+```{r}
+colSums(data == "-")
+```
+
+#dobro nalazenje -
+```{r}
+crtica=data$SALE.PRICE[2]
+colSums(data == crtica)
+```
+
+#ponovni ispis tipova kolona
+```{r}
+str(data[, c("LAND.SQUARE.FEET", "GROSS.SQUARE.FEET", "SALE.PRICE")])
+```
+
+#Menjanje - sa NA u SALE.PRICE
+```{r}
+data$SALE.PRICE[data$SALE.PRICE == crtica] <- NA
+colSums(data == crtica, na.rm = TRUE)
+```
+
+
+#Menjanje - sa NA u LAND.SQUARE.FEET i GROSS.SQUARE.FEET
+```{r}
+data$LAND.SQUARE.FEET[data$LAND.SQUARE.FEET == crtica] <- NA
+data$GROSS.SQUARE.FEET[data$GROSS.SQUARE.FEET == crtica] <- NA
+
+colSums(data == crtica, na.rm = TRUE)
+```
+
+#Konverzija iz char u numeric
+```{r}
+data$SALE.PRICE <- as.numeric(data$SALE.PRICE)
+data$LAND.SQUARE.FEET <- as.numeric(data$LAND.SQUARE.FEET)
+data$GROSS.SQUARE.FEET <- as.numeric(data$GROSS.SQUARE.FEET)
+str(data[, c("LAND.SQUARE.FEET", "GROSS.SQUARE.FEET", "SALE.PRICE")])
+```
+
+#Uklanjanje kolone ADDRESS
+```{r}
+data$ADDRESS <- NULL
+```
+
+#Procenat NA redova u SALE.PRICE
+```{r}
+brojNA_SP <- sum(is.na(data$SALE.PRICE))
+(brojNA_SP / nrow(data)) * 100
+```
+
+#Uklanjanje NA redova za SALE.PRICE
+```{r}
+data <- data[!is.na(data$SALE.PRICE), ]
+sum(is.na(data$SALE.PRICE))
+```
+
+#Pretvaranje u pravi tip 
+```{r}
+data$NEIGHBORHOOD <- as.factor(data$NEIGHBORHOOD)
+data$BUILDING.CLASS.CATEGORY <- as.factor(data$BUILDING.CLASS.CATEGORY)
+data$BUILDING.CLASS.AT.TIME.OF.SALE <- as.factor(data$BUILDING.CLASS.AT.TIME.OF.SALE)
+data$BOROUGH <- as.factor(data$BOROUGH)
+data$ZIP.CODE <- as.factor(data$ZIP.CODE)
+
+data$TAX.CLASS.AT.TIME.OF.SALE <- factor(
+  as.character(data$TAX.CLASS.AT.TIME.OF.SALE),
+  levels = c("1", "2", "3", "4"),
+  ordered = TRUE
+)
+
+
+data$SALE.DATE <- as.Date(data$SALE.DATE)
+
+
+data$RESIDENTIAL.UNITS <- as.numeric(data$RESIDENTIAL.UNITS)
+data$COMMERCIAL.UNITS  <- as.numeric(data$COMMERCIAL.UNITS)
+data$TOTAL.UNITS       <- as.numeric(data$TOTAL.UNITS)
+data$YEAR.BUILT        <- as.numeric(data$YEAR.BUILT)
+```
+
+#Summary od ciljne
+```{r}
+summary(data$SALE.PRICE)
+```
+
+#Grafik distribucije
+```{r}
+ggplot(data, aes(x = SALE.PRICE)) +
+  geom_histogram(binwidth = 50000,  
+                 fill = "blue",
+                 color = "black",
+                 alpha = 0.7) +
+  scale_x_continuous(labels = comma, limits = c(0, 5000000)) +
+  coord_cartesian(ylim = c(0, 4000)) +
+  labs(
+    title = "Distribucija prodajne cene",
+    x = "Prodajna cena",
+    y = "Broj nekretnina"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+#Broj redova pre uklanjanja duplikata
+```{r}
+nrow(data)
+```
+
+#Provera postojanja duplih redova
+```{r}
+sum(duplicated(data))
+```
+
+#Provera logickih duplih redova
+```{r}
+key <- with(data, paste(BOROUGH, BLOCK, LOT, SALE.DATE, SALE.PRICE, sep = "_"))
+sum(duplicated(key))
+```
+
+#Uklanjanje duplih redova
+```{r}
+data <- distinct(data, BOROUGH, BLOCK, LOT, SALE.DATE, SALE.PRICE, .keep_all = TRUE)
+```
+
+#Broj redova nakon uklanjanja duplikata
+```{r}
+nrow(data)
+```
+
+#Uklanjanje nelogicnih vrednosti u SALE.PRICE
+```{r}
+data <- data %>%
+  filter(!is.na(SALE.PRICE), SALE.PRICE > 0)
+```
+
+#Uklanjanje nelogicnih vrednosti u LAND i GROSS SQFT
+```{r}
+data <- data %>%
+  filter(is.na(GROSS.SQUARE.FEET) | GROSS.SQUARE.FEET > 0) %>%
+  filter(is.na(LAND.SQUARE.FEET)  | LAND.SQUARE.FEET  > 0)
+```
+
+#Uniti ne smeju biti negativni
+```{r}
+data <- data %>%
+  filter(is.na(TOTAL.UNITS)        | TOTAL.UNITS        >= 0) %>%
+  filter(is.na(RESIDENTIAL.UNITS)  | RESIDENTIAL.UNITS  >= 0) %>%
+  filter(is.na(COMMERCIAL.UNITS)   | COMMERCIAL.UNITS   >= 0)
+```
+
+#Boxplot za YEAR.BUILT
+```{r}
+ggplot(data, aes(y = YEAR.BUILT)) +
+  geom_boxplot(outlier_alpha = 0.5) +
+  labs(
+    title = "Boxplot za YEAR.BUILT",
+    y = "YEAR.BUILT",
+    x = ""
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+```
+
+#Uklanjanje nelogicnih YEAR.BUILT vrednosti
+```{r}
+trenutna_godina <- as.integer(format(Sys.Date(), "%Y"))
+
+data <- data %>%
+  filter(is.na(YEAR.BUILT) | (YEAR.BUILT >= 1800 & YEAR.BUILT <= trenutna_godina))
+```
+
+#Pravljenje log kolona
+```{r}
+data <- data %>%
+  mutate(
+    log_sale_price = log10(SALE.PRICE),
+    log_gross_sqft = ifelse(is.na(GROSS.SQUARE.FEET), NA, log10(GROSS.SQUARE.FEET + 1)),
+    log_land_sqft  = ifelse(is.na(LAND.SQUARE.FEET),  NA, log10(LAND.SQUARE.FEET + 1)))
+```
+
+#Distribucija log_sale_price
+```{r}
+ggplot(data %>% filter(!is.na(log_sale_price)), aes(x = log_sale_price)) +
+  geom_histogram(bins = 40, fill = "blue", color = "black", alpha = 0.7) +
+  scale_x_continuous(
+    breaks = pretty_breaks(n = 10)
+  ) +
+  labs(
+    title = "Distribucija log_sale_price",
+    x = "log10(SALE.PRICE)",
+    y = "Broj nekretnina"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+#Odnos SALE.PRICE i GROSS.SQUARE.FEET
+```{r}
+ggplot(data, aes(x = log_gross_sqft, y = log_sale_price)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title="Grafik odnosa SALE.PRICE i GROSS.SQUARE.FEET",
+       x="log10(GROSS.SQUARE.FEET+1)", y="log10(SALE.PRICE)") +
+  theme_minimal()
+```
+
+
+#Uklanjanje administrativnih prodaja i ostavljanje odgovarajucih vrednosti
+```{r}
+data <- data %>%
+  filter(SALE.PRICE > 10000)
+```
+
+#Pregledniji grafik
+```{r}
+ggplot(data, aes(x = log_gross_sqft, y = log_sale_price)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title="Grafik odnosa SALE.PRICE i GROSS.SQUARE.FEET",
+       x="log10(GROSS.SQUARE.FEET+1)", y="log10(SALE.PRICE)") +
+  theme_minimal()
+```
+
+#Uklanjanje outliera
+```{r}
+data <- data %>%
+  filter(log_gross_sqft <= 6.2 | is.na(log_gross_sqft))
+```
+
+#Odnos SALE.PRICE i LAND.SQUARE.FEET
+```{r}
+ggplot(data, aes(x = log_land_sqft, y = log_sale_price)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title="Grafik odnosa SALE.PRICE i LAND.SQUARE.FEET",
+       x="log10(LAND.SQUARE.FEET+1)", y="log10(SALE.PRICE)") +
+  theme_minimal()
+```
+
+#Uklanjanje outliera
+```{r}
+data <- data %>%
+  filter(log_land_sqft <= 5.3 | is.na(log_land_sqft))
+```
+
+#Odnos SALE.PRICE i YEAR.BUILT
+```{r}
+ggplot(data, aes(x = YEAR.BUILT, y = log_sale_price)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "loess", se = FALSE) +
+  labs(title="Grafik odnosa SALE.PRICE i YEAR.BUILT",
+       x="YEAR.BUILT", y="log10(SALE.PRICE)") +
+  theme_minimal()
+```
+
+#Brisanje starih zgrada
+```{r}
+data <- data %>%
+  filter(is.na(YEAR.BUILT) | YEAR.BUILT >= 1900)
+```
+
+#Odnos SALE.PRICE i TOTAL.UNITS
+```{r}
+ggplot(data, aes(x = TOTAL.UNITS, y = log_sale_price)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title="Grafik odnosa SALE.PRICE i TOTAL.UNITS",
+       x="TOTAL.UNITS", y="log10(SALE.PRICE)") +
+  theme_minimal()
+```
+
+#Uklanjanje jedne outlier vrednosti
+```{r}
+data <- data %>%
+  filter(is.na(TOTAL.UNITS) | TOTAL.UNITS <= 2000)
+```
+
+#Grafik SALE.PRICE i BOROUGH
+```{r}
+ggplot(data, aes(x = BOROUGH, y = SALE.PRICE)) +
+  geom_boxplot(outlier_alpha = 0.3) +
+  scale_y_log10(labels = comma) +
+  labs(title="SALE.PRICE po BOROUGH", x="BOROUGH", y="SALE.PRICE") +
+  theme_minimal()
+```
+
+#Top 10 kategorija gradjevine
+```{r}
+top10_kat <- data %>%
+  count(BUILDING.CLASS.CATEGORY, sort = TRUE) %>%
+  slice_head(n = 10) %>%
+  pull(BUILDING.CLASS.CATEGORY)
+```
+
+#Boxplot SALE.PRICE po BUILDING.CLASS.CATEGORY
+```{r}
+ggplot(filter(data, BUILDING.CLASS.CATEGORY %in% top10_kat),
+       aes(x = BUILDING.CLASS.CATEGORY, y = SALE.PRICE)) +
+  geom_boxplot(outlier_alpha = 0.25) +
+  scale_y_log10(labels = comma) +
+  labs(title="SALE.PRICE po BUILDING.CLASS.CATEGORY",
+       x="Kategorija", y="SALE.PRICE") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#Boxplot SALE.PRICE po BUILDING.CLASS.AT.TIME.OF.SALE
+```{r}
+top10_klasa_nekretnine <- names(
+  sort(table(data$BUILDING.CLASS.AT.TIME.OF.SALE), decreasing = TRUE)[1:10]
+)
+
+data_top10_pomocna <- data %>%
+  filter(BUILDING.CLASS.AT.TIME.OF.SALE %in% top10_klasa_nekretnine)
+
+ggplot(data_top10_pomocna,
+       aes(x = BUILDING.CLASS.AT.TIME.OF.SALE, y = SALE.PRICE)) +
+  geom_boxplot(outlier_alpha = 0.3) +
+  scale_y_log10(labels = comma) +
+  labs(
+    title = "SALE.PRICE BUILDING.CLASS.AT.TIME.OF.SALE",
+    x = "BUILDING.CLASS.AT.TIME.OF.SALE",
+    y = "SALE.PRICE"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+#Boxplot SALE.PRICE po TAX.CLASS.AT.TIME.OF.SALE
+```{r}
+ggplot(data, aes(x = TAX.CLASS.AT.TIME.OF.SALE, y = SALE.PRICE)) +
+  geom_boxplot(outlier_alpha = 0.3) +
+  scale_y_log10(labels = comma) +
+  labs(title="SALE.PRICE po TAX.CLASS.AT.TIME.OF.SALE",
+       x="TAX.CLASS.AT.TIME.OF.SALE", y="SALE.PRICE") +
+  theme_minimal()
+```
+
+#Broj NA u kolonama pre imputacije
+```{r}
+sum(is.na(data$LAND.SQUARE.FEET))
+sum(is.na(data$GROSS.SQUARE.FEET))
+```
+
+
+#Koriscenje Anderson-Darling testa normalnosti
+```{r}
+ad.test(na.omit(data$LAND.SQUARE.FEET))
+ad.test(na.omit(data$GROSS.SQUARE.FEET))
+```
+
+#Neophodna transformacija da bi preskoci_land kolona imala ispravne vrednosti, kasnije vracena u factor
+```{r}
+data <- data %>%
+  mutate(
+    BUILDING.CLASS.CATEGORY = as.character(BUILDING.CLASS.CATEGORY),
+    BUILDING.CLASS.CATEGORY = trimws(BUILDING.CLASS.CATEGORY)
+  )
+
+```
+
+#Kategorije za koje na osnovu domenskog znanja nema smisla vrsiti imputaciju
+```{r}
+preskoci_land <- c(
+  "10 COOPS - ELEVATOR APARTMENTS",
+  "09 COOPS - WALKUP APARTMENTS",
+  "13 CONDOS - ELEVATOR APARTMENTS",
+  "17 CONDO COOPS",
+  "04 TAX CLASS 1 CONDOS"
+)
+data <- data %>%
+  mutate(preskoci_land = BUILDING.CLASS.CATEGORY %in% preskoci_land)
+```
+
+
+#Imputacija po grupama
+```{r}
+data <- data %>%
+  group_by(BUILDING.CLASS.CATEGORY) %>%
+  mutate(
+    LAND.SQUARE.FEET = ifelse(
+      preskoci_land & is.na(LAND.SQUARE.FEET),
+      median(LAND.SQUARE.FEET, na.rm = TRUE),
+      LAND.SQUARE.FEET
+    ),
+    GROSS.SQUARE.FEET = ifelse(
+      is.na(GROSS.SQUARE.FEET),
+      median(GROSS.SQUARE.FEET, na.rm = TRUE),
+      GROSS.SQUARE.FEET
+    )
+  ) %>%
+  ungroup()
+```
+
+
+#Broj NA vrednosti u kolonama posle imputacije
+```{r}
+sum(is.na(data$LAND.SQUARE.FEET))
+sum(is.na(data$GROSS.SQUARE.FEET))
+```
+
+#Dodatna imputacija za one redove iz kategorija koje nisu imale ni jednu vrednost
+```{r}
+data <- data %>%
+  mutate(
+    LAND.SQUARE.FEET = ifelse(
+      is.na(LAND.SQUARE.FEET) & !preskoci_land,
+      median(LAND.SQUARE.FEET, na.rm = TRUE),
+      LAND.SQUARE.FEET
+    ),
+    GROSS.SQUARE.FEET = ifelse(
+      is.na(GROSS.SQUARE.FEET),
+      median(GROSS.SQUARE.FEET, na.rm = TRUE),
+      GROSS.SQUARE.FEET
+    )
+  )
+```
+
+# Osiguravanje da LAND ostane NA u preskoci_land kategorijama
+```{r}
+data <- data %>%
+  mutate(
+    LAND.SQUARE.FEET = ifelse(preskoci_land, NA, LAND.SQUARE.FEET)
+  )
+```
+
+#Provera i broj NA vrednosti u kolonama posle finalne imputacije
+```{r}
+sum(is.na(data$LAND.SQUARE.FEET))
+head(data[, c("BUILDING.CLASS.CATEGORY", "LAND.SQUARE.FEET")], 20)
+
+sum(is.na(data$GROSS.SQUARE.FEET))
+```
+
+#EDA
+
+#GROSS.SQUARE.FEET i SALE.PRICE
+```{r}
+ggplot(data, aes(x = GROSS.SQUARE.FEET, y = SALE.PRICE)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE)+
+  scale_y_continuous(labels = comma) +
+  labs(title = "GROSS.SQUARE.FEET i SALE.PRICE",
+       x = "Bruto površina",
+       y = "Prodajna cena") +
+  theme_minimal()
+```
+
+
+#GROSS.SQUARE.FEET i SALE.PRICE zumirano
+```{r}
+ggplot(data, aes(x = GROSS.SQUARE.FEET, y = SALE.PRICE)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  coord_cartesian(xlim = c(0, 20000),
+                  ylim = c(0, 5000000)) +
+  labs(title = "GROSS.SQUARE.FEET i SALE.PRICE",
+       x = "Bruto površina",
+       y = "Prodajna cena") +
+  theme_minimal()
+```
+
+
+#LAND.SQUARE.FEET i SALE.PRICE
+```{r}
+ggplot(data, aes(x = LAND.SQUARE.FEET, y = SALE.PRICE)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "LAND.SQUARE.FEET vs SALE.PRICE",
+       x = "Površina zemljišta",
+       y = "Prodajna cena") +
+  theme_minimal()
+```
+
+#LAND.SQUARE.FEET i SALE.PRICE zumiran
+```{r}
+ggplot(data, aes(x = LAND.SQUARE.FEET, y = SALE.PRICE)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  coord_cartesian(xlim = c(0, 20000),
+                  ylim = c(0, 5000000)) +
+  labs(title = "LAND.SQUARE.FEET vs SALE.PRICE",
+       x = "Površina zemljišta",
+       y = "Prodajna cena") +
+  theme_minimal()
+```
+
+#SALE.PRICE po BOROUGH
+```{r}
+ggplot(data, aes(x = BOROUGH, y = log_sale_price)) +
+  geom_boxplot() +
+  scale_y_continuous(labels = comma) +
+  labs(title = "SALE.PRICE po BOROUGH",
+       x = "BOROUGH",
+       y = "Prodajna cena") +
+  theme_minimal()
+```
+
+#SALE.PRICE po BUILDING.CLASS.CATEGORY
+```{r}
+top10_kategorije <- names(
+  sort(table(data$BUILDING.CLASS.CATEGORY), decreasing = TRUE)[1:10]
+)
+
+data_top10_pomocna <- data %>%
+  filter(BUILDING.CLASS.CATEGORY %in% top10_kategorije)
+
+ggplot(data_top10_pomocna,
+       aes(x = BUILDING.CLASS.CATEGORY, y = log_sale_price)) +
+  geom_boxplot(outlier_alpha = 0.3) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "SALE.PRICE po BUILDING.CLASS.CATEGORY (Top 10)",
+    x = "BUILDING.CLASS.CATEGORY",
+    y = "SALE.PRICE"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+#SALE.PRICE po BUILDING.CLASS.AT.TIME.OF.SALE
+```{r}
+top10_kalsa_nekretnine <- names(
+  sort(table(data$BUILDING.CLASS.AT.TIME.OF.SALE), decreasing = TRUE)[1:10]
+)
+
+data_top10_pomocna <- data %>%
+  filter(BUILDING.CLASS.AT.TIME.OF.SALE %in% top10_kalsa_nekretnine)
+
+ggplot(data_top10_pomocna,
+       aes(x = BUILDING.CLASS.AT.TIME.OF.SALE, y = log_sale_price)) +
+  geom_boxplot(outlier_alpha = 0.3) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "SALE.PRICE po BUILDING.CLASS.AT.TIME.OF.SALE (Top 10)",
+    x = "BUILDING.CLASS.AT.TIME.OF.SALE",
+    y = "SALE.PRICE"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+
+#Dodavanje dve nove kolone za starost i mesec
+```{r}
+data <- data %>%
+  mutate(
+    starost = as.integer(format(SALE.DATE, "%Y")) - YEAR.BUILT,
+    mesec = factor(as.integer(format(SALE.DATE, "%m")))
+  )
+```
+
+#SALE.PRICE i mesec
+```{r}
+ggplot(data, aes(x = mesec, y = log_sale_price)) +
+  geom_boxplot(outlier_alpha = 0.3) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "SALE.PRICE po mesecu",
+    x = "Mesec",
+    y = "SALE.PRICE"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+#SALE.PRICE i starost
+```{r}
+ggplot(data, aes(x = starost, y = log_sale_price)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "SALE.PRICE po starosti",
+       x = "Starost",
+       y = "Prodajna cena") +
+  theme_minimal()
+```
+
+#SALE.PRICE i RESIDENTIAL.UNITS
+```{r}
+ggplot(data, aes(x = RESIDENTIAL.UNITS, y = SALE.PRICE)) +
+  geom_point(alpha = 0.3) +
+  coord_cartesian(xlim = c(0, 50),
+                  ylim = c(0, 5000000)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "SALE.PRICE po broju stambenih jedinica",
+       x = "Broj stambenih jedinica",
+       y = "Prodajna cena") +
+  theme_minimal()
+```
+
+#SALE.PRICE i COMMERCIAL.UNITS
+```{r}
+ggplot(data, aes(x = COMMERCIAL.UNITS, y = SALE.PRICE)) +
+  geom_point(alpha = 0.3) +
+  coord_cartesian(xlim = c(0, 50),
+                  ylim = c(0, 5000000)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "SALE.PRICE po broju komercijalnih jedinica",
+       x = "Broj komercijalnih jedinica",
+       y = "Prodajna cena") +
+  theme_minimal()
+```
+
+#SALE.PRICE i TOTAL.UNITS
+```{r}
+ggplot(data, aes(x = TOTAL.UNITS, y = SALE.PRICE)) +
+  geom_point(alpha = 0.3) +
+  coord_cartesian(xlim = c(0, 100),
+                  ylim = c(0, 5000000)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "SALE.PRICE po ukupnom broju jedinica",
+       x = "Ukupan broj jedinica",
+       y = "Prodajna cena") +
+  theme_minimal()
+```
+
+#Feature Engineering
+
+#Agregacija za BUILDING.CLASS.CATEGORY
+```{r}
+#Podrazumevana grupa
+data$grupa_nekretnine <- "OTHER"  
+
+#Porodicne kuce
+data$grupa_nekretnine[grepl("ONE FAMILY", data$BUILDING.CLASS.CATEGORY)]   <- "ONE_FAMILY"
+data$grupa_nekretnine[grepl("TWO FAMILY", data$BUILDING.CLASS.CATEGORY)]   <- "TWO_FAMILY"
+data$grupa_nekretnine[grepl("THREE FAMILY", data$BUILDING.CLASS.CATEGORY)] <- "THREE_FAMILY"
+
+#Condos i coops
+data$grupa_nekretnine[grepl("CONDO", data$BUILDING.CLASS.CATEGORY)] <- "CONDO"
+data$grupa_nekretnine[grepl("COOP",  data$BUILDING.CLASS.CATEGORY)] <- "COOP"
+data$grupa_nekretnine[grepl("COOPS", data$BUILDING.CLASS.CATEGORY)] <- "COOP"
+
+#Rentals
+data$grupa_nekretnine[grepl("RENTAL",  data$BUILDING.CLASS.CATEGORY)] <- "RENTAL"
+data$grupa_nekretnine[grepl("RENTALS", data$BUILDING.CLASS.CATEGORY)] <- "RENTAL"
+
+#Commercial (store, office, hotels, warehouses, factories...)
+data$grupa_nekretnine[grepl("STORE", data$BUILDING.CLASS.CATEGORY)]      <- "COMMERCIAL"
+data$grupa_nekretnine[grepl("OFFICE", data$BUILDING.CLASS.CATEGORY)]     <- "COMMERCIAL"
+data$grupa_nekretnine[grepl("HOTEL", data$BUILDING.CLASS.CATEGORY)]      <- "COMMERCIAL"
+data$grupa_nekretnine[grepl("WAREHOUSE", data$BUILDING.CLASS.CATEGORY)]  <- "COMMERCIAL"
+data$grupa_nekretnine[grepl("FACTORY", data$BUILDING.CLASS.CATEGORY)]    <- "COMMERCIAL"
+data$grupa_nekretnine[grepl("INDUSTRIAL", data$BUILDING.CLASS.CATEGORY)] <- "COMMERCIAL"
+data$grupa_nekretnine[grepl("COMMERCIAL", data$BUILDING.CLASS.CATEGORY)] <- "COMMERCIAL"
+
+#Pretvaramo u factor za model
+data$grupa_nekretnine <- as.factor(data$grupa_nekretnine)
+```
+
+#Pretvaramo u factor za model i provera raspodele novih grupa
+```{r}
+data$grupa_nekretnine <- as.factor(data$grupa_nekretnine)
+
+table(data$grupa_nekretnine)
+```
+
+#Ponovno logaritmovanje vrednosti zbog imputacija
+```{r}
+data <- data %>%
+  mutate(
+    log_gross_sqft = log10(GROSS.SQUARE.FEET + 1),
+    log_land_sqft  = log10(LAND.SQUARE.FEET + 1))
+```
+
+#Iskoriscenost parcele = bruto povrsina / povrsina zemljista
+```{r}
+data <- data %>%
+  mutate(isk_parcele = (GROSS.SQUARE.FEET + 1) / (LAND.SQUARE.FEET + 1))
+```
+
+#Kombinacija BOROUGH i grupa_nekretnine
+```{r}
+data <- data %>%
+  mutate(borough_group = interaction(BOROUGH, grupa_nekretnine, drop = TRUE))
+```
+
+
+#Feature selection
+```{r}
+data_fs <- data %>%
+  select(
+    SALE.PRICE, log_sale_price, GROSS.SQUARE.FEET, log_gross_sqft, LAND.SQUARE.FEET, log_land_sqft,
+    TOTAL.UNITS, RESIDENTIAL.UNITS, COMMERCIAL.UNITS, BOROUGH,
+    grupa_nekretnine, isk_parcele, borough_group
+  )
+```
+
+
+#train test split
+```{r}
+train_index <- sample(seq_len(nrow(data)), size = 0.8 * nrow(data))
+train <- data[train_index, ]
+test  <- data[-train_index, ]
+```
+
+#cor matrica
+```{r}
+numericki <- train %>%
+  select(where(is.numeric))
+cor_matrix <- cor(numericki, use = "complete.obs")
+round(cor_matrix, 2)
+```
+
+#model1
+```{r}
+model1 <- lm(log_sale_price ~ log_gross_sqft, data = train)
+summary(model1)
+```
+
+#model2
+```{r}
+model2 <- lm(
+  log_sale_price ~ 
+    GROSS.SQUARE.FEET +
+    LAND.SQUARE.FEET +
+    TOTAL.UNITS +
+    COMMERCIAL.UNITS +
+    RESIDENTIAL.UNITS,
+  data = train
+)
+summary(model2)
+```
+
+#model3
+```{r}
+model3 <- lm(
+  log_sale_price ~ 
+    log_gross_sqft +
+    log_land_sqft +
+    TOTAL.UNITS +
+    COMMERCIAL.UNITS +
+    RESIDENTIAL.UNITS +
+    factor(BOROUGH) +
+    factor(grupa_nekretnine),
+  data = train
+)
+summary(model3)
+```
+
+#ridge i lasso
+```{r}
+data_pomocna_regularizacija <- data_fs %>%
+  select(-SALE.PRICE)
+data_pomocna_regularizacija <- drop_na(data_pomocna_regularizacija)
+train_index <- sample(seq_len(nrow(data_pomocna_regularizacija)), 
+                      size = 0.8 * nrow(data_pomocna_regularizacija))
+
+train <- data_pomocna_regularizacija[train_index, ]
+test  <- data_pomocna_regularizacija[-train_index, ]
+
+x_train <- model.matrix(log_sale_price ~ ., data = train)[, -1]
+y_train <- train$log_sale_price
+
+x_test <- model.matrix(~ ., data = test)[, -1]
+x_test <- x_test[, colnames(x_train)]
+y_test <- test$log_sale_price
+
+ridge_cv <- cv.glmnet(x_train, y_train, alpha = 0)
+lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1)
+
+ridge_cv$lambda.min
+
+lasso_cv$lambda.min
+
+ridge_preds = predict(ridge_cv, newx = x_test, s = "lambda.min")
+lasso_preds = predict(lasso_cv, newx = x_test, s = "lambda.min")
+
+
+rmse(y_test, ridge_preds)
+
+rmse(y_test, lasso_preds)
+```
+
+#
+```{r}
+
+```
+
+#
+```{r}
+
+```
+
+#
+```{r}
+
+```
+
+#
+```{r}
+
+```
+
+#
+```{r}
+
+```
+
+#
+```{r}
+
+```
+
+#
+```{r}
+
+```
+
+#
+```{r}
+
+```
