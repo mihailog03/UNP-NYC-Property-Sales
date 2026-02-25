@@ -1,4 +1,4 @@
-# NYC Property Sales — Predikcija prodajne cene
+# NYC Property Sales - Predikcija prodajne cene
 
 Cilj ovog projekta je da se na osnovu podataka o prodajama nekretnina u Njujorku (NYC Property Sales dataset sa Kaggle platforme) napravi model koji predviđa prodajnu cenu. Projekat obuhvata kompletan tok rada: od pripreme i čišćenja podataka, preko EDA analize i rada sa nedostajućim vrednostima, do feature engineering-a i treniranja modela.
 
