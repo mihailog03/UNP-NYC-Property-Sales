@@ -1,4 +1,4 @@
-# NYC Property Sales — Predikcija prodajne cene
+# NYC Property Sales - Predikcija prodajne cene
 
 Cilj ovog projekta je da se na osnovu podataka o prodajama nekretnina u Njujorku (NYC Property Sales dataset sa Kaggle platforme) napravi model koji predviđa prodajnu cenu. Projekat obuhvata kompletan tok rada: od pripreme i čišćenja podataka, preko EDA analize i rada sa nedostajućim vrednostima, do feature engineering-a i treniranja modela.
 
@@ -142,9 +142,3 @@ Na osnovu poređenja četiri modela na test skupu (RMSE, MAE i R²), najbolji re
 
 ```r
 source("seminarski.R")
-
----
-
-## Zaključak
-Log-transformacija prodajne cene pokazala se kao ključna za stabilnije modelovanje i fer poređenje modela, dok su površine i lokacija ostali najinformativniji prediktori. Regularizovani modeli (Ridge/Lasso) daju vrlo slične rezultate, a najbolji linearni model sa interakcijama i kategorijskim faktorima postiže najnižu grešku u okviru linearnih pristupa. Dalji napredak bi verovatno došao iz naprednijih nelinearnih modela i finije obrade lokacionih informacija, uz oprezno rukovanje outlier-ima koji mogu biti legitimne transakcije.
-
