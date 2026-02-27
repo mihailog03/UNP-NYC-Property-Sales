@@ -5,6 +5,10 @@ library(scales)
 library(nortest)
 library(glmnet)
 library(Metrics)
+library(sf)
+library(tigris)
+library(randomForest)
+library(caret)
 data = read.csv("nyc-rolling-sales.csv")
 
 nrow(data)
@@ -13,6 +17,54 @@ ncol(data)
 str(data)
 summary(data)
 names(data)
+
+#Mapa
+#U R postoji jedan lep nacin da se prikazu mape sa korisnim podacima a to je uz pomoc paketa sf i tigris
+data_pomocna = read.csv("nyc-rolling-sales.csv")
+data_pomocna$SALE.PRICE <- as.numeric(gsub(",", "", data_pomocna$SALE.PRICE))
+ny_counties <- counties(state = "NY", cb = TRUE, year = 2022)
+ny_naselja <- ny_counties %>%
+  filter(NAME %in% c("New York", "Bronx", "Kings", "Queens", "Richmond"))
+
+nasa_naselja<- data.frame(
+  BOROUGH = c(1,2,3,4,5),
+  NAME = c("Manhattan", "Bronx", "Brooklyn", "Queens", "Staten Island")
+)
+#ne poklapaju se imena tako da moramo da ih promenimo kao sto su u paketu
+data_pomocna <- data_pomocna %>%
+  mutate(
+    BOROUGH = as.numeric(as.character(BOROUGH)),
+    novo_ime = case_when(
+      BOROUGH == 1 ~ "New York",
+      BOROUGH == 2 ~ "Bronx",
+      BOROUGH == 3 ~ "Kings",
+      BOROUGH == 4 ~ "Queens",
+      BOROUGH == 5 ~ "Richmond"
+    )
+  )
+
+prosecna_cena_naselja <- data_pomocna %>%
+  group_by(novo_ime) %>%
+  summarise(prosek = mean(SALE.PRICE, na.rm = TRUE))
+
+mapa <- ny_naselja
+
+indeks <- match(ny_naselja$NAME, prosecna_cena_naselja$novo_ime)
+
+avg_vrednost <- prosecna_cena_naselja$prosek[indeks]
+
+mapa$prosek <- avg_vrednost
+
+ggplot(mapa) +
+  geom_sf(aes(fill = prosek)) +
+  scale_fill_viridis_c(labels = comma) +
+  labs(
+    title = "Prosečna cena nekretnina po borough-u (NYC)",
+    fill = "Prosečna cena"
+  ) +
+  theme_minimal()
+#Ovim grafikom mozemo da vidimo da methetn prednjaci sa cenama nekretnina
+
 
 summary(data$SALE.PRICE)
 
@@ -144,7 +196,6 @@ ggplot(data, aes(x = SALE.PRICE)) +
   theme_minimal() +
   theme(plot.title = element_text(hjust = 0.5, face = "bold"))
 
-
 #Uklanjanje duplih redova
 nrow(data)
 sum(duplicated(data))
@@ -155,8 +206,7 @@ sum(duplicated(key))
 data <- distinct(data, BOROUGH, BLOCK, LOT, SALE.DATE, SALE.PRICE, .keep_all = TRUE)
 nrow(data)
 
-#Analiza outliera
-
+#Univarijantna analiza i analiza outliera
 
 
 #Izbacivanje nelogicnih vrednosti
@@ -189,7 +239,50 @@ trenutna_godina <- as.integer(format(Sys.Date(), "%Y"))
 data <- data %>%
   filter(is.na(YEAR.BUILT) | (YEAR.BUILT >= 1800 & YEAR.BUILT <= trenutna_godina))
 
-#Odnosi SALE.PRICE sa ostalim kolonama
+#TOTAL.UNITS
+
+ggplot(data, aes(x = TOTAL.UNITS)) +
+  geom_histogram(binwidth = 1, boundary = 0, color = "black", alpha = 0.7) +
+  coord_cartesian(xlim = c(0, 20)) +
+  labs(title = "Raspodela TOTAL.UNITS") +
+  theme_minimal()
+
+#RESIDENTIAL.UNITS
+
+ggplot(data, aes(x = RESIDENTIAL.UNITS)) +
+  geom_histogram(binwidth = 1, boundary = 0, color = "black", alpha = 0.7) +
+  coord_cartesian(xlim = c(0, 15)) +
+  labs(title = "Raspodela RESIDENTIAL.UNITS") +
+  theme_minimal()
+
+#COMMERCIAL.UNITS
+
+ggplot(data, aes(x = COMMERCIAL.UNITS)) +
+  geom_histogram(binwidth = 1, boundary = 0, color = "black", alpha = 0.7) +
+  coord_cartesian(xlim = c(0, 10)) +
+  labs(title = "Raspodela COMMERCIAL.UNITS") +
+  theme_minimal()
+
+#LAND.SQUARE.FEET
+
+#raspodela pre logaritamske transformacije
+ggplot(data, aes(x = LAND.SQUARE.FEET)) +
+  geom_histogram(bins = 60, color = "black", alpha = 0.7) +
+  scale_x_log10() +
+  labs(title = "LAND.SQUARE.FEET",
+       x = "LAND.SQUARE.FEET (log10 skala)", y = "Broj") +
+  theme_minimal()
+
+
+#GROSS.SQUARE.FEET
+
+#raspodela pre logaritamske transformacije
+ggplot(data, aes(x = GROSS.SQUARE.FEET)) +
+  geom_histogram(bins = 60, color = "black", alpha = 0.7) +
+  scale_x_log10() +
+  labs(title = "GROSS.SQUARE.FEET",
+       x = "GROSS.SQUARE.FEET (log10 skala)", y = "Broj") +
+  theme_minimal()
 
 data <- data %>%
   mutate(
@@ -209,6 +302,53 @@ ggplot(data %>% filter(!is.na(log_sale_price)), aes(x = log_sale_price)) +
   ) +
   theme_minimal() +
   theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+#raspodele posle logaritamske transformacije
+ggplot(data, aes(x = log_land_sqft)) +
+  geom_histogram(bins = 50, color = "black", alpha = 0.7) +
+  labs(title = "log_land_sqft", x = "log10(LAND.SQUARE.FEET + 1)", y = "Broj") +
+  theme_minimal()
+
+ggplot(data, aes(x = log_gross_sqft)) +
+  geom_histogram(bins = 50, color = "black", alpha = 0.7) +
+  labs(title = "log_gross_sqft", x = "log10(GROSS.SQUARE.FEET + 1)", y = "Broj") +
+  theme_minimal()
+
+#BOROUGH
+
+ggplot(data, aes(x = BOROUGH, fill = BOROUGH)) +
+  geom_bar(alpha = 0.8) +
+  labs(title = "Broj zapisa po BOROUGH", x = "Borough", y = "Broj") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+#BUILDING.CLASS.CATEGORY
+
+top10 <- data %>%
+  count(BUILDING.CLASS.CATEGORY, sort = TRUE) %>%
+  head(10)
+
+ggplot(top10, aes(x = reorder(BUILDING.CLASS.CATEGORY, n), y = n, fill = BUILDING.CLASS.CATEGORY)) +
+  geom_col(alpha = 0.8) +
+  coord_flip() +
+  labs(title = "BUILDING.CLASS.CATEGORY (Top 10)", x = "", y = "Broj zapisa") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+#NEIGHBORHOOD
+
+top10_nbh <- data %>%
+  count(NEIGHBORHOOD, sort = TRUE) %>%
+  head(10)
+
+ggplot(top10_nbh, aes(x = reorder(NEIGHBORHOOD, n), y = n, fill = NEIGHBORHOOD)) +
+  geom_col(alpha = 0.8) +
+  coord_flip() +
+  labs(title = "NEIGHBORHOOD (Top 10)", x = "", y = "Broj zapisa") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+#Odnosi SALE.PRICE sa ostalim kolonama
 
 #Numericke kolone
 
@@ -335,6 +475,46 @@ ggplot(data, aes(x = TAX.CLASS.AT.TIME.OF.SALE, y = SALE.PRICE)) +
   theme_minimal()
 
 
+#Multivarijantna analiza
+
+#SALE.PRICE, GROSS.SQUARE.FEET i BOROUGH
+
+ggplot(data, aes(x = log_gross_sqft, 
+                 y = log_sale_price, 
+                 color = BOROUGH)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Odnos povrsine i cene po opštinama",
+    x = "log GROSS.SQUARE.FEET",
+    y = "log SALE.PRICE",
+    color = "BOROUGH"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+#SALE.PRICE, LAND.SQUARE.FEET i BOROUGH
+
+ggplot(data, aes(x = log_land_sqft, 
+                 y = log_sale_price, 
+                 color = BOROUGH)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Odnos povrsine i cene po opštinama",
+    x = "log LAND.SQUARE.FEET",
+    y = "log SALE.PRICE",
+    color = "BOROUGH"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+
+
 #Imputacija vrednosti
 
 #Broj NA vrednosti u kolonama pre imputacije
@@ -348,78 +528,41 @@ sum(is.na(data$GROSS.SQUARE.FEET))
 ad.test(na.omit(data$LAND.SQUARE.FEET))
 ad.test(na.omit(data$GROSS.SQUARE.FEET))
 
-head(sort(table(data$BUILDING.CLASS.CATEGORY),decreasing=TRUE),10)
-
-#Neophodna transformacija da bi preskoci_land kolona imala ispravne vrednosti, kasnije vracena u factor
+# flag (da model zna da je bila imputacija)
 data <- data %>%
   mutate(
-    BUILDING.CLASS.CATEGORY = as.character(BUILDING.CLASS.CATEGORY),
-    BUILDING.CLASS.CATEGORY = trimws(BUILDING.CLASS.CATEGORY)
+    imp_land = as.integer(is.na(LAND.SQUARE.FEET)),
+    imp_gross = as.integer(is.na(GROSS.SQUARE.FEET))
   )
 
-#Kategorije za koje na osnovu domenskog znanja nema smisla vrsiti imputaciju
-preskoci_land <- c(
-  "10 COOPS - ELEVATOR APARTMENTS",
-  "09 COOPS - WALKUP APARTMENTS",
-  "13 CONDOS - ELEVATOR APARTMENTS",
-  "17 CONDO COOPS",
-  "04 TAX CLASS 1 CONDOS"
-)
+# medijane po grupi (BOROUGH + BUILDING.CLASS.CATEGORY)
+grp_medians <- data %>%
+  group_by(BOROUGH, BUILDING.CLASS.CATEGORY) %>%
+  summarise(
+    med_land  = median(LAND.SQUARE.FEET,  na.rm = TRUE),
+    med_gross = median(GROSS.SQUARE.FEET, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# global fallback medijane (ako neka grupa nema nijednu poznatu vrednost)
+global_med_land  <- median(data$LAND.SQUARE.FEET,  na.rm = TRUE)
+global_med_gross <- median(data$GROSS.SQUARE.FEET, na.rm = TRUE)
 
 data <- data %>%
-  mutate(preskoci_land = BUILDING.CLASS.CATEGORY %in% preskoci_land)
-
-#Imputacija po grupama
-data <- data %>%
-  group_by(BUILDING.CLASS.CATEGORY) %>%
+  left_join(grp_medians, by = c("BOROUGH", "BUILDING.CLASS.CATEGORY")) %>%
   mutate(
-    LAND.SQUARE.FEET = ifelse(
-      preskoci_land & is.na(LAND.SQUARE.FEET),
-      median(LAND.SQUARE.FEET, na.rm = TRUE),
-      LAND.SQUARE.FEET
-    ),
-    GROSS.SQUARE.FEET = ifelse(
-      is.na(GROSS.SQUARE.FEET),
-      median(GROSS.SQUARE.FEET, na.rm = TRUE),
-      GROSS.SQUARE.FEET
-    )
+    LAND.SQUARE.FEET  = ifelse(is.na(LAND.SQUARE.FEET),
+                               ifelse(is.na(med_land),  global_med_land,  med_land),
+                               LAND.SQUARE.FEET),
+    GROSS.SQUARE.FEET = ifelse(is.na(GROSS.SQUARE.FEET),
+                               ifelse(is.na(med_gross), global_med_gross, med_gross),
+                               GROSS.SQUARE.FEET)
   ) %>%
-  ungroup()
+  select(-med_land, -med_gross)
 
 #Broj NA vrednosti u kolonama posle imputacije
 sum(is.na(data$LAND.SQUARE.FEET))
 sum(is.na(data$GROSS.SQUARE.FEET))
-
-#Dodatna imputacija za one redove iz kategorija koje nisu imale ni jednu vrednost
-data <- data %>%
-  mutate(
-    LAND.SQUARE.FEET = ifelse(
-      is.na(LAND.SQUARE.FEET) & !preskoci_land,
-      median(LAND.SQUARE.FEET, na.rm = TRUE),
-      LAND.SQUARE.FEET
-    ),
-    GROSS.SQUARE.FEET = ifelse(
-      is.na(GROSS.SQUARE.FEET),
-      median(GROSS.SQUARE.FEET, na.rm = TRUE),
-      GROSS.SQUARE.FEET
-    )
-  )
-
-# Osiguravanje da LAND ostane NA u preskoci_land kategorijama
-data <- data %>%
-  mutate(
-    LAND.SQUARE.FEET = ifelse(preskoci_land, NA, LAND.SQUARE.FEET)
-  ) 
-
-#Broj NA vrednosti u kolonama posle finalne imputacije
-sum(is.na(data$LAND.SQUARE.FEET))
-head(data[, c("BUILDING.CLASS.CATEGORY", "LAND.SQUARE.FEET")], 20)
-
-sum(is.na(data$GROSS.SQUARE.FEET))
-
-data$BUILDING.CLASS.CATEGORY <- as.factor(data$BUILDING.CLASS.CATEGORY)
-
-
 
 #EDA
 
@@ -444,27 +587,37 @@ ggplot(data, aes(x = GROSS.SQUARE.FEET, y = SALE.PRICE)) +
        y = "Prodajna cena") +
   theme_minimal()
 
+cor.test(data$log_gross_sqft, data$log_sale_price)
+#p je manje od 0.05 tako da je znacajno obelezje
+
 #lsf i sale
-ggplot(data, aes(x = LAND.SQUARE.FEET, y = SALE.PRICE)) +
+ggplot(data, aes(x = log_land_sqft, y = log_sale_price)) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "lm", se = FALSE) +
-  scale_y_continuous(labels = comma) +
-  labs(title = "LAND.SQUARE.FEET vs SALE.PRICE",
-       x = "Površina zemljišta",
-       y = "Prodajna cena") +
+  labs(
+    title = "log(LAND.SQUARE.FEET) vs log(SALE.PRICE)",
+    x = "log(1 + LAND.SQUARE.FEET)",
+    y = "log(1 + SALE.PRICE)"
+  ) +
   theme_minimal()
 
 #lsf i sale zumiran
-ggplot(data, aes(x = LAND.SQUARE.FEET, y = SALE.PRICE)) +
+xlim <- quantile(data$log_land_sqft, probs = c(0.01, 0.99), na.rm = TRUE)
+ylim <- quantile(data$log_sale_price, probs = c(0.01, 0.99), na.rm = TRUE)
+
+ggplot(data, aes(x = log_land_sqft, y = log_sale_price)) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "lm", se = FALSE) +
-  scale_y_continuous(labels = comma) +
-  coord_cartesian(xlim = c(0, 20000),
-                  ylim = c(0, 5000000)) +
-  labs(title = "LAND.SQUARE.FEET vs SALE.PRICE",
-       x = "Površina zemljišta",
-       y = "Prodajna cena") +
+  coord_cartesian(xlim = xlim, ylim = ylim) +
+  labs(
+    title = "log(LAND.SQUARE.FEET) vs log(SALE.PRICE) (1–99% zoom)",
+    x = "log(1 + LAND.SQUARE.FEET)",
+    y = "log(1 + SALE.PRICE)"
+  ) +
   theme_minimal()
+
+cor.test(data$log_land_sqft, data$log_sale_price)
+#p je manje od 0.05 tako da je znacajno obelezje
 
 #opstina i sale
 ggplot(data, aes(x = BOROUGH, y = log_sale_price)) +
@@ -474,6 +627,9 @@ ggplot(data, aes(x = BOROUGH, y = log_sale_price)) +
        x = "BOROUGH",
        y = "Prodajna cena") +
   theme_minimal()
+
+anova_borough <- aov(log_sale_price ~ BOROUGH, data = data)
+summary(anova_borough)
 
 #klasa zgrade
 top10_kategorije <- names(
@@ -526,8 +682,29 @@ ggplot(data_top10_pomocna,
 data <- data %>%
   mutate(
     starost = as.integer(format(SALE.DATE, "%Y")) - YEAR.BUILT,
-    mesec = factor(as.integer(format(SALE.DATE, "%m")))
+    mesec = factor(as.integer(format(SALE.DATE, "%m"))),
+    godina = as.factor(format(SALE.DATE, "%Y"))
   )
+
+#Broj transakcija po mesecu
+ggplot(data, aes(x = mesec)) +
+  geom_bar(alpha = 0.7) +
+  labs(
+    title = "Broj transakcija po mesecu",
+    x = "Mesec",
+    y = "Broj prodaja"
+  ) +
+  theme_minimal()
+
+#Broj transakcija po godini
+ggplot(data, aes(x = godina)) +
+  geom_bar(alpha = 0.7) +
+  labs(
+    title = "Broj transakcija po godini",
+    x = "Godina",
+    y = "Broj prodaja"
+  ) +
+  theme_minimal()
 
 #mesec i sale
 ggplot(data, aes(x = mesec, y = log_sale_price)) +
@@ -624,6 +801,19 @@ data$grupa_nekretnine <- as.factor(data$grupa_nekretnine)
 #Provera raspodele novih grupa
 table(data$grupa_nekretnine)
 
+#Grupe nekretnine
+ggplot(data_fs, aes(x = grupa_nekretnine, y = log_sale_price)) +
+  geom_boxplot(alpha = 0.3) +
+  labs(
+    title = "SALE.PRICE po grupa_nekretnine",
+    x = "Grupa nekretnine",
+    y = "log SALE.PRICE"
+  ) +
+  theme_minimal() 
+
+anova_grupan <- aov(log_sale_price ~ grupa_nekretnine, data = data_fs)
+summary(anova_grupan)
+
 #Ponovno logovanje zbog imputed vrednosti za GROSS.SQUARE.FEET i LAND.SQUARE.FEET
 data <- data %>%
   mutate(
@@ -632,68 +822,151 @@ data <- data %>%
 
 #Iskoriscenost parcele = bruto povrsina / povrsina zemljista
 data <- data %>%
-  mutate(isk_parcele = (GROSS.SQUARE.FEET + 1) / (LAND.SQUARE.FEET + 1))
+  mutate(isk_parcele = log_gross_sqft / log_land_sqft)
+
+#Iskoriscenost parcele grafik
+ggplot(data_fs, aes(x = isk_parcele, y = log_sale_price)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Odnos iskoriscenosti parcele i prodajne cene",
+    x = "Iskoriscenost parcele",
+    y = "log SALE.PRICE"
+  ) 
 
 #Kombinacija BOROUGH i grupa_nekretnine
 data <- data %>%
   mutate(borough_group = interaction(BOROUGH, grupa_nekretnine, drop = TRUE))
 
+#BOROUGH i grupa_nekretnine grafik
+ggplot(data_fs, aes(x = borough_group, y = log_sale_price)) +
+  geom_boxplot(outlier_alpha = 0.2) +
+  labs(
+    title = "SALE.PRICE po borough_group",
+    x = "BOROUGH × grupa_nekretnine",
+    y = "log10(SALE.PRICE)"
+  ) +
+  theme_minimal() 
+anova_bg <- aov(log_sale_price ~ borough_group, data = data_fs)
+summary(anova_bg)
+
+#RESIDENTIAL.UNITS grupisanje
+data$res_units_grupa <- NA
+
+data$res_units_grupa[data$RESIDENTIAL.UNITS == 0] <- "0"
+data$res_units_grupa[data$RESIDENTIAL.UNITS == 1] <- "1"
+data$res_units_grupa[data$RESIDENTIAL.UNITS %in% c(2, 3)] <- "2-3"
+data$res_units_grupa[data$RESIDENTIAL.UNITS >= 4] <- "4+"
+
+# Faktor transformacija
+data$res_units_grupa <- factor(data$res_units_grupa, levels = c("0", "1", "2-3", "4+"))
+
+#grupa po jedinicama grafik
+ggplot(data, aes(x = res_units_grupa, y = log_sale_price)) +
+  geom_boxplot(alpha = 0.6) +
+  labs(
+    title = "Prodajna cena u odnosu na broj stambenih jedinica",
+    x = "Broj stambenih jedinica",
+    y = "log SALE.PRICE"
+  ) +
+  theme_minimal() 
+
+#COMMERCIAL.UNITS binarni indikator
+data$ima_komercijalne <- ifelse(is.na(data$COMMERCIAL.UNITS), 0,
+                                ifelse(data$COMMERCIAL.UNITS > 0, 1, 0))
+data$ima_komercijalne <- factor(data$ima_komercijalne, levels = c(0, 1))
+
+#komericjalne jedinice grafik
+ggplot(data, aes(x = ima_komercijalne, y = log_sale_price)) +
+  geom_boxplot(alpha = 0.6) +
+  labs(
+    title = "Uticaj komercijalnih jedinica na cenu",
+    x = "Ima komercijalne jedinice (0 = Ne, 1 = Da)",
+    y = "log SALE.PRICE"
+  ) +
+  theme_minimal()
+
 #Feature selection
 
 data_fs <- data %>%
   select(
-    SALE.PRICE, log_sale_price, GROSS.SQUARE.FEET, log_gross_sqft, LAND.SQUARE.FEET, log_land_sqft,
+    SALE.PRICE, log_sale_price, GROSS.SQUARE.FEET, log_gross_sqft, LAND.SQUARE.FEET, BUILDING.CLASS.CATEGORY ,log_land_sqft,
     TOTAL.UNITS, RESIDENTIAL.UNITS, COMMERCIAL.UNITS, BOROUGH,
-    grupa_nekretnine, isk_parcele, borough_group
+    grupa_nekretnine, isk_parcele, borough_group,ima_komercijalne,res_units_grupa
   )
 
 #Rad sa modelima
 
 #Train test split
-train_index <- sample(seq_len(nrow(data)), size = 0.8 * nrow(data))
-train <- data[train_index, ]
-test  <- data[-train_index, ]
+train_index <- sample(seq_len(nrow(data_fs)), size = 0.8 * nrow(data_fs))
+train <- data_fs[train_index, ]
+test  <- data_fs[-train_index, ]
 
 numericki <- train %>%
   select(where(is.numeric))
 
 cor_matrix <- cor(numericki, use = "complete.obs")
 round(cor_matrix, 2)
-
+#Prvi model uzimamo vrednost koja ima najvecu korelaciju 
 model1 <- lm(log_sale_price ~ log_gross_sqft, data = train)
+pred1 <- predict(model1, newdata = test)
+rmse(test$log_sale_price, pred1)
 summary(model1)
+
+#drugi model uzimamo sve numericke koje nismo dobili preko FE
 
 model2 <- lm(
   log_sale_price ~ 
-    GROSS.SQUARE.FEET +
-    LAND.SQUARE.FEET +
-    TOTAL.UNITS +
-    COMMERCIAL.UNITS +
-    RESIDENTIAL.UNITS,
+    log_gross_sqft +
+    log_land_sqft +
+    TOTAL.UNITS,
   data = train
 )
 summary(model2)
+pred2 <- predict(model2, newdata = test)
+rmse(test$log_sale_price, pred2)
 
+#Treci model uzecemo neke od nasih FE vrednosti i probati da dobijemo bolji model
 model3 <- lm(
-  log_sale_price ~ 
-    log_gross_sqft +
-    log_land_sqft +
-    TOTAL.UNITS +
-    COMMERCIAL.UNITS +
-    RESIDENTIAL.UNITS +
-    factor(BOROUGH) +
-    factor(grupa_nekretnine),
+  log_sale_price ~
+    isk_parcele * grupa_nekretnine +
+    factor(ima_komercijalne) +
+    factor(res_units_grupa) 
+  ,
   data = train
 )
 summary(model3)
+pred3 <- predict(model3, newdata = test)
+rmse(test$log_sale_price, pred3)
+
+#Model koji se najbolje pokazao 
+
+model4 <- lm(
+  log_sale_price ~ 
+    log_gross_sqft * BOROUGH + 
+    log_land_sqft + 
+    factor(ima_komercijalne) + 
+    factor(res_units_grupa) + 
+    factor(BUILDING.CLASS.CATEGORY),
+  data = train
+)
+
+pred4 <- predict(model4, newdata = test)
+#Metrike najboljeg modela 
+rmse(test$log_sale_price, pred4)
+mae(test$log_sale_price, pred4)
+summary(model4)
+
 
 #ridge i lasso
 
-data_pomocna_regularizacija <- data_fs %>%
-  select(-SALE.PRICE)
+data_pomocna_regularizacija  <- data_fs %>%
+  select(
+    log_sale_price, log_gross_sqft, BUILDING.CLASS.CATEGORY ,log_land_sqft,
+    RESIDENTIAL.UNITS, COMMERCIAL.UNITS, BOROUGH
+  )
+
 data_pomocna_regularizacija <- drop_na(data_pomocna_regularizacija)
-train_index <- sample(seq_len(nrow(data_pomocna_regularizacija)), 
-                      size = 0.8 * nrow(data_pomocna_regularizacija))
 
 train <- data_pomocna_regularizacija[train_index, ]
 test  <- data_pomocna_regularizacija[-train_index, ]
@@ -701,7 +974,7 @@ test  <- data_pomocna_regularizacija[-train_index, ]
 x_train <- model.matrix(log_sale_price ~ ., data = train)[, -1]
 y_train <- train$log_sale_price
 
-x_test <- model.matrix(~ ., data = test)[, -1]
+x_test <- model.matrix(log_sale_price ~ ., data = test)[, -1]
 x_test <- x_test[, colnames(x_train)]
 y_test <- test$log_sale_price
 
@@ -715,7 +988,52 @@ lasso_cv$lambda.min
 ridge_preds = predict(ridge_cv, newx = x_test, s = "lambda.min")
 lasso_preds = predict(lasso_cv, newx = x_test, s = "lambda.min")
 
+rmse(y_test, lasso_preds)
+mae(y_test, lasso_preds)
+
+tss <- sum((y_test - mean(y_test))^2)
+rss_lasso <- sum((y_test - lasso_preds)^2)
+r2_lasso <- 1 - rss_lasso/tss
+r2_lasso
 
 rmse(y_test, ridge_preds)
+mae(y_test, ridge_preds)
 
-rmse(y_test, lasso_preds)
+rss_ridge <- sum((y_test - ridge_preds)^2)
+r2_ridge <- 1 - rss_ridge/tss
+r2_ridge
+
+#random forest
+data_rf <- data_pomocna_regularizacija 
+
+train <- data_rf[train_index, ]
+test  <- data_rf[-train_index, ]
+dummies <- dummyVars(~ ., data = train[, !names(train) %in% "log_sale_price"])
+
+data.train.num <- data.frame(predict(dummies, newdata = train))
+data.train.num$log_sale_price <- train$log_sale_price
+
+data.test.num <- data.frame(predict(dummies, newdata = test))
+data.test.num$log_sale_price <- test$log_sale_price
+
+rf_model <- randomForest(
+  log_sale_price ~ ., 
+  data = data.train.num,
+  ntree = 500,      
+  mtry = 3,         
+  importance = TRUE
+)
+
+rf_preds <- predict(rf_model, newdata = data.test.num)
+
+rmse_val <- rmse(data.test.num$log_sale_price, rf_preds)
+mae_val  <- mae(data.test.num$log_sale_price, rf_preds)
+rmse_val
+mae_val
+
+rss_rf <- sum((data.test.num$log_sale_price - rf_preds)^2)
+tss_rf <- sum((data.test.num$log_sale_price - 
+                 mean(data.test.num$log_sale_price))^2)
+
+r2_rf <- 1 - rss_rf/tss_rf
+r2_rf
